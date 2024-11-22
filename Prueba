@@ -26,6 +26,8 @@ def iniciar_monitoreo():
     global directorio_monitoreo  # Usar la variable global
     global directorio_raiz 
     global ruta_base
+    global ruta_error
+    global ruta_procesado
     if directorio_monitoreo is None:  # Si no se ha seleccionado una carpeta
         directorio_monitoreo = filedialog.askdirectory()  # Mostrar el diálogo de selección
         if not directorio_monitoreo:  # Si no se selecciona ninguna carpeta, salir
@@ -46,8 +48,9 @@ def iniciar_monitoreo():
            
     # Construir la ruta base dinámica que apunta a la carpeta "Compartido"
     ruta_base = os.path.join(directorio_raiz, "Procesado")
-    
-    print(f"ruta base: {ruta_base}")
+    ruta_error = os.path.join(directorio_raiz, "Errores")
+    ruta_procesado = os.path.join(directorio_raiz, "Errores")
+  
     
     escribir_en_consola(f"Monitoreando cambios en: {directorio_monitoreo}")
 
