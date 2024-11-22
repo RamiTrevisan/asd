@@ -1,0 +1,411 @@
+import pandas as pd
+import pyodbc
+from tkinter import Tk, Button, Label, filedialog, PhotoImage, Frame, Scrollbar, Text
+import chardet
+from dateutil import parser
+from datetime import datetime, time, timedelta
+import sys
+import os
+from PIL import Image, ImageTk
+from tkinter import messagebox
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
+import threading
+from pathlib import Path
+import time  # Importar el módulo time
+from datetime import time as dt_time 
+import threading
+import shutil
+
+
+#====================================
+#   MONITOREO
+#====================================
+
+def iniciar_monitoreo():
+    global directorio_monitoreo  # Usar la variable global
+    global directorio_raiz 
+    global ruta_base
+    if directorio_monitoreo is None:  # Si no se ha seleccionado una carpeta
+        directorio_monitoreo = filedialog.askdirectory()  # Mostrar el diálogo de selección
+        if not directorio_monitoreo:  # Si no se selecciona ninguna carpeta, salir
+            escribir_en_consola("No se seleccionó ninguna carpeta para monitorear.")
+           
+            return
+
+
+    #ASIGNO DIRECTORIO RAIZ ANTES DE LA CARPETA /A_Procesar
+    directorio_raiz = os.path.dirname(directorio_monitoreo)
+    # Iniciar el monitoreo con el directorio seleccionado
+    observer = Observer()
+    event_handler = CSVHandler()
+    observer.schedule(event_handler, path=directorio_monitoreo, recursive=True)
+    observer_thread = threading.Thread(target=observer.start, daemon=True)
+    observer_thread.start()
+     # Obtener la ruta donde se está ejecutando el script
+           
+    # Construir la ruta base dinámica que apunta a la carpeta "Compartido"
+    ruta_base = os.path.join(directorio_raiz, "Procesado")
+    
+    print(f"ruta base: {ruta_base}")
+    
+    escribir_en_consola(f"Monitoreando cambios en: {directorio_monitoreo}")
+
+#====================================================================================
+#               FIN MONITOREO
+#====================================================================================
+
+#============================================
+#   INICIO FUNCION MOVER ARCHIVOS PROCESADOS
+#============================================
+
+
+
+#MOVER ARCHIVOS A VIEJOS
+def mover_archivos_a_viejos():
+    """
+    Mueve todos los archivos de la carpeta 'A_Procesar' a la carpeta 'Viejos'.
+    """
+    carpeta_a_procesar = os.path.join(directorio_raiz, "A_Procesar")
+    carpeta_viejos = os.path.join(directorio_raiz, "Viejos")
+
+    # Verificar que ambas carpetas existan
+    if not os.path.exists(carpeta_a_procesar):
+        escribir_en_consola("La carpeta 'A_Procesar' no existe.")
+        return
+
+    if not os.path.exists(carpeta_viejos):
+        # Crear la carpeta 'Viejos' si no existe
+        os.makedirs(carpeta_viejos)
+    
+    # Obtener todos los archivos de la carpeta 'A_Procesar'
+    archivos_a_mover = [f for f in os.listdir(carpeta_a_procesar) if os.path.isfile(os.path.join(carpeta_a_procesar, f))]
+    
+    for archivo in archivos_a_mover:
+        archivo_origen = os.path.join(carpeta_a_procesar, archivo)
+        archivo_destino = os.path.join(carpeta_viejos, archivo)
+
+        try:
+            shutil.move(archivo_origen, archivo_destino)  # Mover el archivo
+            escribir_en_consola(f"Archivo movido a 'Viejos': {archivo}")
+        except Exception as e:
+            escribir_en_consola(f"Error al mover el archivo {archivo}: {e}")
+
+#====================================================================================
+#       FIN MOVER ARCHIVOS PROCESADOS
+#=====================================================================================
+
+#==================================
+# INTERFAZ GRAFICA
+#==================================
+
+# --- Interfaz gráfica ---
+root = Tk()
+root.title("Carga de CSV y procesamiento de datos")
+root.geometry("1000x800")  # Aumenté el tamaño de la ventana
+
+frame = Frame(root)
+
+# Obtener la ruta al directorio actual del script o ejecutable
+base_path = os.path.dirname(os.path.abspath(_file_))
+
+# Construir la ruta al archivo de la imagen
+image_path = os.path.join(base_path, 'images', 'logo_16b.jpg')
+
+# Cargar la imagen de fondo
+background_image = Image.open(image_path) 
+background_image = background_image.resize((300, 200), Image.Resampling.LANCZOS)  # Mantener tamaño de imagen
+background_photo = ImageTk.PhotoImage(background_image)
+
+# Crear un Label para mostrar la imagen
+background_label = Label(root, image=background_photo, width=300, height=200)
+background_label.grid(row=0, column=0, padx=10, pady=10, columnspan=2)
+
+estado_label = Label(root, text="Esperando archivo...", font=("Arial", 14), width=50, height=2)
+estado_label.grid(row=1, column=0, padx=20, pady=10, columnspan=2)
+
+console = Text(root, height=15, width=150)  # Agrandar consola de texto
+console.grid(row=3, column=0, padx=20, pady=20, columnspan=2)
+
+# Botones
+monitorear_button = Button(frame, text="Monitorear carpeta", font=("Arial", 14), command=iniciar_monitoreo)
+
+
+monitorear_button.pack(pady=10)
+
+frame.grid(row=2, column=0, padx=20, pady=10, columnspan=2)
+
+# Centrar los elementos en la ventana
+root.grid_rowconfigure(0, weight=1)
+root.grid_rowconfigure(1, weight=1)
+root.grid_rowconfigure(2, weight=1)
+root.grid_rowconfigure(3, weight=3)
+root.grid_columnconfigure(0, weight=1)
+root.grid_columnconfigure(1, weight=1)
+
+#======================================================
+# FIN INTEFAZ GRAFICA
+#=======================================================
+
+# Constante para los parámetros de conexión
+CONN_PARAMS = {
+    'DRIVER': '{ODBC Driver 17 for SQL Server}',
+    'SERVER': '10.10.10.120',
+    'DATABASE': 'Client1',
+    'UID': 'OPTIMUM',
+    'PWD': 'OPTIMUM'
+}
+
+#==============================================
+#   INICIO DE CODIGO
+#=============================================
+
+nombre_archivo = None
+
+directorio_monitoreo = None  # Variable global que almacenará la ruta del directorio
+
+# Variable global para controlar hilos o procesos
+global_observer = None  # Guardará la referencia al observador de monitoreo
+
+
+
+def escribir_en_log(mensaje, archivo_log):
+    """
+    Función para escribir en un archivo de log.
+    """
+    try:
+        with open(archivo_log, 'a', encoding='utf-8') as log_file:
+            log_file.write(mensaje + "\n")
+    except Exception as e:
+        escribir_en_consola(f"Error al escribir en el archivo de log: {e}")
+
+
+
+def detener_todo_menos_monitoreo():
+    """
+    Función para detener todo menos el monitoreo.
+    """
+    escribir_en_consola("Se detienen todos los procesos excepto el monitoreo.")
+   
+   
+    if global_observer:
+        global_observer.stop()  # Detener el monitoreo anterior si existe
+    iniciar_monitoreo()  # Reiniciar el monitoreo
+
+
+
+#============================================
+# FIN DE CODIGO NUEVO
+#==========================================
+
+
+# --- Funciones de la aplicación ---
+
+def wait_for_file(file_path):
+    while not os.path.isfile(file_path):
+        time.sleep(1)  # Esperar 1 segundo antes de volver a comprobar
+
+
+
+
+
+def escribir_en_consola(mensaje):
+    """
+    Función para escribir un mensaje en la consola de la interfaz gráfica
+    y en un archivo de log.
+    """
+    console.insert("end", mensaje + "\n")
+    console.yview("end")
+    root.update_idletasks()  # Actualiza la interfaz para que se muestre el texto inmediatamente
+
+    # Verificar si 'nombre_archivo' tiene un valor antes de usarlo
+    if nombre_archivo:
+        fecha_actual = datetime.now().strftime("%d%m%Y")
+        base_nombre = os.path.basename(nombre_archivo).replace('.csv', '')
+        archivo_log = os.path.join(ruta_base, f"{base_nombre}log{fecha_actual}.txt")
+        escribir_en_log(mensaje, archivo_log)
+
+# Cuando se llame por primera vez:
+escribir_en_consola(f"Monitoreando cambios en: {directorio_monitoreo}")
+
+
+   
+
+def get_connection():
+    conn_str = ';'.join([f'{key}={value}' for key, value in CONN_PARAMS.items()])
+    return pyodbc.connect(conn_str)
+
+def limpiar_csv(archivo, encoding):
+    with open(archivo, 'r', encoding=encoding) as f:
+        lines = f.readlines()
+    lines = [line.strip() + ";" * (10 - line.count(";")) + "\n" for line in lines if line.strip()]
+    archivo_corregido = archivo.replace('.csv', '_limpiado.csv')
+    with open(archivo_corregido, 'w', encoding=encoding) as f:
+        f.writelines(lines)
+    escribir_en_consola(f"Archivo limpiado guardado como: {archivo_corregido}")
+    return archivo_corregido
+
+def obtener_ke(meter_id):
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        query = '''SELECT ke, channel FROM m_reg_desc_map WHERE meter_id = ? AND reg_type = 4 AND log = 0'''
+        cursor.execute(query, (meter_id,))
+        rows = cursor.fetchall()
+        conn.close()
+        return {row.channel: row.ke for row in rows}
+    except Exception as e:
+    # Manejamos el error cerrando la conexión si está abierta y reportando el error
+        if 'conn' in locals() and conn:
+            conn.close()
+        print(f"Error al ejecutar obtener_ke: {e}")
+        
+            
+
+def obtener_raw_unit(meter_id, channel):
+    conn = get_connection()
+    cursor = conn.cursor()
+    query = '''SELECT descr FROM m_raw_units WHERE id = (
+               SELECT id_raw_unit FROM m_reg_desc_map 
+               WHERE meter_id = ? AND reg_type = 4 AND channel = ? AND log = 0)'''
+    cursor.execute(query, (meter_id, channel))
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else None
+
+def obtener_reg_descr_id(meter_id, channel):
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        query = '''SELECT id FROM m_reg_desc_map 
+                   WHERE meter_id = ? AND reg_type = 4 AND channel = ? AND log = 0'''
+        cursor.execute(query, (meter_id, channel))
+        row = cursor.fetchone()
+        conn.close()
+
+        if row:
+            return row[0]
+        else:
+            escribir_en_consola(f"El medidor {meter_id} no tiene lecturas previas de los canales {channel}.")
+            detener_todo_menos_monitoreo()  # Detener todo menos el monitoreo
+            return None  # Asegurarse de que no se devuelva nada
+
+    except Exception as e:
+        escribir_en_consola(f"Error en obtener_reg_descr_id: {e}")
+        detener_todo_menos_monitoreo()  # Detener todo menos el monitoreo
+        return None  # En caso de error, devolver None
+
+
+def auto_csv(archivo):
+    global nombre_archivo
+    encoding = None  # Inicializa encoding aquí
+    if not archivo:
+        archivo = filedialog.askopenfilename(filetypes=[("Archivos CSV", "*.csv")])
+    if archivo:
+        nombre_archivo = archivo
+        estado_label.config(text="PROCESANDO...")
+        root.update()
+        time.sleep(2)
+        try:
+            with open(archivo, 'rb') as f:
+                result = chardet.detect(f.read())
+                encoding = result['encoding']
+        except PermissionError:
+            escribir_en_consola(f"No se puede abrir el archivo: {archivo}. Verifica permisos.")
+            mover_archivos_a_viejos()
+           
+            return
+        except Exception as e:
+            escribir_en_consola(f"Error al detectar la codificación: {e}")
+            mover_archivos_a_viejos()
+            return  # Salir si hay un error
+
+        if encoding is None:
+            escribir_en_consola("No se pudo detectar la codificación.")
+            mover_archivos_a_viejos()
+            return  # Salir si no se detectó la codificación
+
+        escribir_en_consola(f"Codificación detectada: {encoding}")
+       
+        try:
+            archivo = limpiar_csv(archivo, encoding)
+            df = pd.read_csv(archivo, encoding=encoding, delimiter=';', header=None, skip_blank_lines=True, on_bad_lines='skip')
+            escribir_en_consola("Contenido del archivo CSV cargado:")
+            
+            meter_id = df.iloc[1, 0].split(' - ')[0].strip()
+            escribir_en_consola(f"Meter ID extraído: {meter_id}")
+            
+            ke_dict = obtener_ke(meter_id)
+            conn = get_connection()
+            cursor = conn.cursor()
+            for index, row in df.iloc[5:].iterrows():
+                try:
+                    fecha = str(row[8]).strip() if pd.notna(row[8]) else ''
+                    fecha_convertida = parser.parse(fecha, fuzzy=False) if fecha else None
+                    fecha_formateada_t0 = fecha_convertida.strftime('%Y-%m-%d %H:%M:%S') if fecha_convertida else None
+                    fecha_formateada_tf = (fecha_convertida + timedelta(minutes=15)).strftime('%Y-%m-%d %H:%M:%S') if fecha_convertida else None
+                    for col_idx in range(8):
+                        valor = str(row[col_idx]).strip() if pd.notna(row[col_idx]) else ''
+                        valor_insert = float(valor.replace(',', '.')) if valor else None
+                        channel = col_idx + 1
+                        val_demand = valor_insert # VALOR QUE IRIA SI HAY ENERGIA(* 4 if channel in [1, 2] else valor_insert)
+                        ke = ke_dict.get(channel, 1)
+                        raw_unit = obtener_raw_unit(meter_id, channel)
+                        reg_descr_id = obtener_reg_descr_id(meter_id, channel)
+                        if reg_descr_id is None:
+                            escribir_en_consola(f"Se detiene el proceso porque no se encontró reg_descr_id para meter_id={meter_id}, channel={channel}.")
+                            detener_todo_menos_monitoreo()  # Detener todo menos el monitoreo
+                            mover_archivos_a_viejos()
+                            return  # Terminar el proceso inmediatamente
+                        val_factor = valor_insert * ke if valor_insert is not None else None
+                        cursor.execute('''INSERT INTO M_PROFILE (meter_id, meter_t0, meter_tf, local_t0, local_tf, 
+                                                              channel, reg_descr_id, qualifier, val, raw_unit, 
+                                                              val_demand, val_edit, val_factor, ke, origin_id)
+                              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                           (meter_id, fecha_formateada_t0, fecha_formateada_tf, fecha_formateada_t0, fecha_formateada_tf,
+                            channel, reg_descr_id, 0, valor_insert, raw_unit, val_demand, val_factor, val_factor, ke, 2))
+                        escribir_en_consola(f"Registro insertado: Meter ID={meter_id}, meter_t0={fecha_formateada_t0}, meter_tf={fecha_formateada_tf}, channel={channel}, reg_desc_id={reg_descr_id}, val={valor_insert}, val_demand={val_demand}, val_factor={val_factor}, Ke={ke}")
+                        
+                except Exception as e:
+                    escribir_en_consola(f"Error procesando fila: {e}")
+                    mover_archivos_a_viejos()
+                    
+            conn.commit()
+            conn.close()
+            escribir_en_consola("Carga de CSV e inserción completada.")
+            
+            estado_label.config(text="Carga finalizada con éxito.")
+
+             # Mover los archivos procesados a la carpeta Viejos
+            mover_archivos_a_viejos()
+        except Exception as e:
+            escribir_en_consola(f"Error al procesar el archivo: {e}")
+            mover_archivos_a_viejos()
+            detener_todo_menos_monitoreo() #DETIENE TODOS LOS PROCESOS MENOS EL MONITOREO
+# --- Monitoreo de carpeta con watchdog ---
+
+class CSVHandler(FileSystemEventHandler):
+    
+    
+    def on_created(self, event):
+        if not event.is_directory and event.src_path.endswith('.csv') and '_limpiado' not in event.src_path:
+            escribir_en_consola(f"Nuevo archivo detectado: {event.src_path}")
+                      
+            archivo_creado = event.src_path 
+            wait_for_file(event.src_path)
+            auto_csv(event.src_path)
+           
+    
+
+
+
+
+
+
+
+
+#ESTO ES PARA MONITOREAR AL INICIAR EL PROGRAMA SIEMPRE LA MISMA CARPETA
+#directorio_monitoreo = r"C:\Users\Administrador.WIN-BMHQKPSAVA9\Desktop\Compartido"
+#iniciar_monitoreo(directorio_monitoreo)
+
+root.mainloop()
